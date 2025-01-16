@@ -3,6 +3,13 @@
 #include <conio.h>
 #include <math.h>
 
+#define INF 32767
+#define SW 320
+#define SH 200
+#define VPS 1.0
+#define PPZ 1.0
+#define BACKGROUND 15
+
 void set_mode(unsigned char mode) {
      union REGS regs;
      regs.h.ah = 0;
@@ -12,22 +19,31 @@ void set_mode(unsigned char mode) {
 
 void set_pixel(int x, int y, char color) {
      char far *screen = MK_FP(0xA000, 0);
-     screen[y * 320 + x] = color;
+     int ax, ay;
+
+     ax = SW / 2 + x;
+     ay = SH / 2 - y;
+
+     if (ax < 0 || ax >= SW || ay < 0 || ay >= SH) {
+        return;
+     }
+
+     screen[ay * SW + ax] = color;
 }
 
 struct vector2 {
-       int x;
-       int y;
+       float x;
+       float y;
 };
 
 struct vector3 {
-       int x;
-       int y;
-       int z;
+       float x;
+       float y;
+       float z;
 };
 
 struct sphere {
-       int radius;
+       float radius;
        char color;
        struct vector3 center;
 };
@@ -42,7 +58,7 @@ struct vector3 vec3_sub(struct vector3 *a, struct vector3 *b) {
        return result;
 }
 
-int math_dot(struct vector3 *a, struct vector3 *b) {
+float math_dot(struct vector3 *a, struct vector3 *b) {
     return (a->x * b->x) + (a->y * b->y) + (a->z * b->z);
 }
 
@@ -50,15 +66,15 @@ struct vector2 intersect_ray_sphere(struct vector3 *o,
                                     struct vector3 *d,
                                     struct sphere *s) {
      struct vector2 inf, t;
-     int r = s->radius;
-     struct vector3 co = vec3_sub(o, &s->center);
-     int a = math_dot(d, d);
-     int b = 2 * math_dot(&co, d);
-     int c = math_dot(&co, &co) - (r * r);
-     int discr = (b * b) - (4 * a * c);
+     float r = s->radius;
+     struct vector3 co = vec3_sub(&s->center, o);
+     float a = math_dot(d, d);
+     float b = 2 * math_dot(&co, d);
+     float c = math_dot(&co, &co) - (r * r);
+     float discr = (b * b) - (4 * a * c);
 
-     inf.x = 32567;
-     inf.y = 32567;
+     inf.x = INF;
+     inf.y = INF;
 
      if (discr < 0) {
         return inf;
@@ -76,7 +92,7 @@ char trace_ray(struct vector3 *o,
                int t_max,
                int sphere_count,
                struct sphere *spheres) {
-     int closest_t = 32567;
+     float closest_t = INF;
      struct sphere *closest_sphere = 0;
      int i = 0;
      struct vector2 t;
@@ -84,19 +100,19 @@ char trace_ray(struct vector3 *o,
      for (i = 0; i < sphere_count; i++) {
          t = intersect_ray_sphere(o, d, &spheres[i]);
 
-         if ((t.x >= t_min && t.x <= t_max) && t.x < closest_t) {
+         if ((t.x > t_min && t.x < t_max) && t.x < closest_t) {
             closest_t = t.x;
             closest_sphere = &spheres[i];
          }
 
-         if ((t.y >= t_min && t.y <= t_max) && t.y < closest_t) {
+         if ((t.y > t_min && t.y < t_max) && t.y < closest_t) {
             closest_t = t.y;
             closest_sphere = &spheres[i];
          }
      }
 
      if (closest_sphere == 0) {
-        return 15;
+        return BACKGROUND;
      }
 
      return closest_sphere->color;
@@ -105,23 +121,41 @@ char trace_ray(struct vector3 *o,
 struct vector3 canvas_to_viewport(int x, int y) {
        struct vector3 pos;
 
-       pos.x = 320/2 + x;
-       pos.y = 200/2 - y;
-       pos.z = 1;
+       pos.x = x * VPS / SW;
+       pos.y = y * VPS / SH;
+       pos.z = PPZ;
 
        return pos;
 }
 
 int main(void) {
     struct vector3 o; // camera position
-    struct sphere spheres[3];
+    struct sphere spheres[4];
     int x, y;
 
     spheres[0].radius = 1;
     spheres[0].center.x = 0;
-    spheres[0].center.y = 0;
-    spheres[0].center.z = 5;
+    spheres[0].center.y = -1;
+    spheres[0].center.z = 3;
     spheres[0].color = 4;
+
+    spheres[1].radius = 1;
+    spheres[1].center.x = -2;
+    spheres[1].center.y = 0;
+    spheres[1].center.z = 4;
+    spheres[1].color = 2;
+
+    spheres[2].radius = 1;
+    spheres[2].center.x = 2;
+    spheres[2].center.y = 0;
+    spheres[2].center.z = 4;
+    spheres[2].color = 1;
+
+    spheres[3].radius = 5000;
+    spheres[3].center.x = 0;
+    spheres[3].center.y = -5001;
+    spheres[3].center.z = 0;
+    spheres[3].color = 14;
 
     set_mode(0x13);
 
@@ -129,11 +163,11 @@ int main(void) {
     o.y = 0;
     o.z = 0;
 
-    for (y = 200/2; y >= -200/2; y--) {
-        for (x = -320/2; x <= 320/2; x++) {
+    for (y = SH/2; y >= -SH/2; y--) {
+        for (x = -SW/2; x <= SW/2; x++) {
             struct vector3 d = canvas_to_viewport(x, y);
-            char color = trace_ray(&o, &d, 1, 32567, 1, spheres);
-            set_pixel(d.x, d.y, color);
+            char color = trace_ray(&o, &d, 1, INF, 4, spheres);
+            set_pixel(x, y, color);
         }
     }
 
