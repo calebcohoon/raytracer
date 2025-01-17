@@ -1,0 +1,15 @@
+CC = wcl
+CFLAGS = -fpi -d2 -mt -0
+SRCS = RAYTRA~1.C
+OBJS = $(SRCS:.c=.obj)
+EXEC = RAYTRA~1.COM
+
+$(EXEC): $(OBJS)
+    $(CC) $(CFLAGS) $(OBJS)
+
+.c.obj:
+    $(CC) $(CFLAGS) -c $
+
+clean:
+    del *.obj
+    del *.com
