@@ -10,6 +10,42 @@
 #define PPZ 1.0
 #define BACKGROUND 15
 
+void init_palette() {
+     int color, shade;
+     unsigned char index;
+     float intensity;
+     unsigned char base_colors[16][3] = {
+         {0, 0, 0},    // Black
+         {0, 0, 63},   // Blue
+         {0, 63, 0},   // Green
+         {0, 63, 63},  // Cyan
+         {63, 0, 0},   // Red
+         {63, 0, 63},  // Magenta
+         {63, 32, 0},  // Brown
+         {63, 63, 63}, // Light Gray
+         {32, 32, 32}, // Dark Gray
+         {32, 32, 63}, // Light Blue
+         {32, 63, 32}, // Light Green
+         {32, 63, 63}, // Light Cyan
+         {63, 32, 32}, // Light Red
+         {63, 32, 63}, // Light Magenta
+         {63, 63, 32}, // Yellow
+         {63, 63, 63}  // White
+     };
+
+     for (color = 0; color < 16; color++) {
+         for (shade = 0; shade < 16; shade++) {
+             index = color * 16 + shade;
+             intensity = shade / 15.0f;
+
+             outp(0x3C8, index);
+             outp(0x3C9, (unsigned char)(base_colors[color][0] * intensity));
+             outp(0x3C9, (unsigned char)(base_colors[color][1] * intensity));
+             outp(0x3C9, (unsigned char)(base_colors[color][2] * intensity));
+         }
+     }
+}
+
 void set_mode(unsigned char mode) {
      union REGS regs;
      regs.h.ah = 0;
@@ -31,6 +67,15 @@ void set_pixel(int x, int y, char color) {
      screen[ay * SW + ax] = color;
 }
 
+unsigned char shade_color(unsigned char color, float intensity) {
+     unsigned char shade;
+     if (intensity > 1.0f) intensity = 1.0f;
+     if (intensity < 0.0f) intensity = 0.0f;
+
+     shade = (unsigned char)(intensity * 15.0f);
+     return color * 16 + shade;
+}
+
 struct vector2 {
        float x;
        float y;
@@ -48,6 +93,23 @@ struct sphere {
        struct vector3 center;
 };
 
+struct light {
+       int type;
+       float intensity;
+       struct vector3 position;
+       struct vector3 direction;
+};
+
+struct vector3 vec3_add(struct vector3 *a, struct vector3 *b) {
+       struct vector3 result;
+
+       result.x = a->x + b->x;
+       result.y = a->y + b->y;
+       result.z = a->z + b->z;
+
+       return result;
+}
+
 struct vector3 vec3_sub(struct vector3 *a, struct vector3 *b) {
        struct vector3 result;
 
@@ -58,8 +120,66 @@ struct vector3 vec3_sub(struct vector3 *a, struct vector3 *b) {
        return result;
 }
 
+struct vector3 vec3_mul(struct vector3 *v, float s) {
+       struct vector3 result;
+
+       result.x = v->x * s;
+       result.y = v->y * s;
+       result.z = v->z * s;
+
+       return result;
+}
+
+struct vector3 vec3_div(struct vector3 *v, float d) {
+       struct vector3 result;
+
+       result.x = v->x / d;
+       result.y = v->y / d;
+       result.z = v->z / d;
+
+       return result;
+}
+
+float vec3_len(struct vector3 *v) {
+      return sqrt((v->x * v->x) + (v->y * v->y) + (v->z * v->z));
+}
+
 float math_dot(struct vector3 *a, struct vector3 *b) {
-    return (a->x * b->x) + (a->y * b->y) + (a->z * b->z);
+      return (a->x * b->x) + (a->y * b->y) + (a->z * b->z);
+}
+
+float compute_lighting(struct vector3 *p,
+                       struct vector3 *n,
+                       int light_count,
+                       struct light *lights) {
+     float i = 0.0f;
+     int li;
+     struct vector3 L;
+     float n_dot_l = 0.0f;
+
+     for (li = 0; li < light_count; li++) {
+         if (lights[li].type == 0) {
+            i += lights[li].intensity;
+         }
+         else
+         {
+             if (lights[li].type == 1) {
+                L = vec3_sub(p, &lights[li].position);
+             }
+             else
+             {
+                L = lights[li].direction;
+             }
+
+             n_dot_l = math_dot(n, &L);
+
+             if (n_dot_l > 0) {
+                i += lights[li].intensity * n_dot_l/(vec3_len(n) * vec3_len(&L));
+             }
+         }
+     }
+
+     return i;
 }
 
 struct vector2 intersect_ray_sphere(struct vector3 *o,
@@ -86,16 +206,20 @@ struct vector2 intersect_ray_sphere(struct vector3 *o,
      return t;
 }
 
-char trace_ray(struct vector3 *o,
+unsigned char trace_ray(struct vector3 *o,
                struct vector3 *d,
                int t_min,
                int t_max,
                int sphere_count,
-               struct sphere *spheres) {
+               struct sphere *spheres,
+               int light_count,
+               struct light *lights) {
      float closest_t = INF;
      struct sphere *closest_sphere = 0;
      int i = 0;
      struct vector2 t;
+     struct vector3 p, n, inter;
+     float light_inten = 0;
 
      for (i = 0; i < sphere_count; i++) {
          t = intersect_ray_sphere(o, d, &spheres[i]);
@@ -115,7 +239,14 @@ char trace_ray(struct vector3 *o,
         return BACKGROUND;
      }
 
-     return closest_sphere->color;
+     inter = vec3_mul(d, closest_t);
+     p = vec3_add(o, &inter);
+     n = vec3_sub(&closest_sphere->center, &p);
+     n = vec3_div(&n, vec3_len(&n));
+
+     light_inten = compute_lighting(&p, &n, light_count, lights);
+
+     return shade_color(closest_sphere->color, light_inten);
 }
 
 struct vector3 canvas_to_viewport(int x, int y) {
@@ -131,7 +262,10 @@ struct vector3 canvas_to_viewport(int x, int y) {
 int main(void) {
     struct vector3 o; // camera position
     struct sphere spheres[4];
+    struct light lights[3];
     int x, y;
+
+    init_palette();
 
     spheres[0].radius = 1;
     spheres[0].center.x = 0;
@@ -157,6 +291,21 @@ int main(void) {
     spheres[3].center.z = 0;
     spheres[3].color = 14;
 
+    lights[0].type = 0;
+    lights[0].intensity = 0.2f;
+
+    lights[1].type = 1;
+    lights[1].intensity = 0.6f;
+    lights[1].position.x = 2;
+    lights[1].position.y = 1;
+    lights[1].position.z = 0;
+
+    lights[2].type = 2;
+    lights[2].intensity = 0.2f;
+    lights[2].direction.x = 1;
+    lights[2].direction.y = 4;
+    lights[2].direction.z = 4;
+
     set_mode(0x13);
 
     o.x = 0;
@@ -166,7 +315,8 @@ int main(void) {
     for (y = SH/2; y >= -SH/2; y--) {
         for (x = -SW/2; x <= SW/2; x++) {
             struct vector3 d = canvas_to_viewport(x, y);
-            char color = trace_ray(&o, &d, 1, INF, 4, spheres);
+            unsigned char color = trace_ray(&o, &d, 1,
+                 INF, 4, spheres, 3, lights);
             set_pixel(x, y, color);
         }
     }
