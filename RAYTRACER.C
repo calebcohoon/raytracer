@@ -3,45 +3,67 @@
 #include <conio.h>
 #include <math.h>
 
-#define INF 32767
-#define SW 320
-#define SH 200
-#define VPS 1.0
-#define PPZ 1.0
-#define BACKGROUND 15
+#define INF 32767   // Infinity for 16 bit compilers
+#define SW 320      // Screen width
+#define SH 200      // Screen height
+#define VPS 1.0     // Viewport size
+#define PPZ 1.0     // Viewport depth
 
+struct vector2 {
+       float x;
+       float y;
+};
+
+struct vector3 {
+       float x;
+       float y;
+       float z;
+};
+
+struct sphere {
+       float radius;
+       char color;
+       struct vector3 center;
+};
+
+struct light {
+       int type;
+       float intensity;
+       struct vector3 position;
+       struct vector3 direction;
+};
+
+// Build an optimized palette for the four main colors being used
 void init_palette() {
      int color, shade;
      unsigned char index;
      float intensity;
-     unsigned char base_colors[16][3] = {
-         {0, 0, 0},    // Black
+     unsigned char base_colors[4][3] = {
          {0, 0, 63},   // Blue
          {0, 63, 0},   // Green
-         {0, 63, 63},  // Cyan
          {63, 0, 0},   // Red
-         {63, 0, 63},  // Magenta
-         {63, 32, 0},  // Brown
-         {63, 63, 63}, // Light Gray
-         {32, 32, 32}, // Dark Gray
-         {32, 32, 63}, // Light Blue
-         {32, 63, 32}, // Light Green
-         {32, 63, 63}, // Light Cyan
-         {63, 32, 32}, // Light Red
-         {63, 32, 63}, // Light Magenta
-         {63, 63, 32}, // Yellow
-         {63, 63, 63}  // White
+         {63, 63, 32}  // Yellow
      };
 
-     for (color = 0; color < 16; color++) {
-         for (shade = 0; shade < 16; shade++) {
-             index = color * 16 + shade;
-             intensity = shade / 15.0f;
+     for (color = 0; color < 4; color++) {
+         for (shade = 0; shade < 64; shade++) {
+             index = color * 64 + shade;
+             intensity = shade / 63.0f;
 
              outp(0x3C8, index);
-             outp(0x3C9, (unsigned char)(base_colors[color][0] * intensity));
-             outp(0x3C9, (unsigned char)(base_colors[color][1] * intensity));
-             outp(0x3C9, (unsigned char)(base_colors[color][2] * intensity));
+
+             // For the very last shade of yellow, just make it white
+             // so we have a color for the background
+             if (color == 3 && shade == 63)
+             {
+                outp(0x3C9, (unsigned char)63);
+                outp(0x3C9, (unsigned char)63);
+                outp(0x3C9, (unsigned char)63);
+             } else {
+                outp(0x3C9, (unsigned char)(base_colors[color][0] * intensity));
+                outp(0x3C9, (unsigned char)(base_colors[color][1] * intensity));
+                outp(0x3C9, (unsigned char)(base_colors[color][2] * intensity));
+             }
          }
      }
 }
@@ -72,33 +94,9 @@ unsigned char shade_color(unsigned char color, float intensity) {
      if (intensity > 1.0f) intensity = 1.0f;
      if (intensity < 0.0f) intensity = 0.0f;
 
-     shade = (unsigned char)(intensity * 15.0f);
-     return color * 16 + shade;
+     shade = (unsigned char)(intensity * 63.0f);
+     return color * 64 + shade;
 }
-
-struct vector2 {
-       float x;
-       float y;
-};
-
-struct vector3 {
-       float x;
-       float y;
-       float z;
-};
-
-struct sphere {
-       float radius;
-       char color;
-       struct vector3 center;
-};
-
-struct light {
-       int type;
-       float intensity;
-       struct vector3 position;
-       struct vector3 direction;
-};
 
 struct vector3 vec3_add(struct vector3 *a, struct vector3 *b) {
        struct vector3 result;
@@ -236,7 +234,8 @@ unsigned char trace_ray(struct vector3 *o,
      }
 
      if (closest_sphere == 0) {
-        return BACKGROUND;
+        // Full white
+        return shade_color(3, 1);
      }
 
      inter = vec3_mul(d, closest_t);
@@ -265,31 +264,33 @@ int main(void) {
     struct light lights[3];
     int x, y;
 
-    init_palette();
+    o.x = 0;
+    o.y = 0;
+    o.z = 0;
 
     spheres[0].radius = 1;
     spheres[0].center.x = 0;
     spheres[0].center.y = -1;
     spheres[0].center.z = 3;
-    spheres[0].color = 4;
+    spheres[0].color = 2;
 
     spheres[1].radius = 1;
     spheres[1].center.x = -2;
     spheres[1].center.y = 0;
     spheres[1].center.z = 4;
-    spheres[1].color = 2;
+    spheres[1].color = 1;
 
     spheres[2].radius = 1;
     spheres[2].center.x = 2;
     spheres[2].center.y = 0;
     spheres[2].center.z = 4;
-    spheres[2].color = 1;
+    spheres[2].color = 0;
 
     spheres[3].radius = 5000;
     spheres[3].center.x = 0;
     spheres[3].center.y = -5001;
     spheres[3].center.z = 0;
-    spheres[3].color = 14;
+    spheres[3].color = 3;
 
     lights[0].type = 0;
     lights[0].intensity = 0.2f;
@@ -308,9 +309,9 @@ int main(void) {
 
     set_mode(0x13);
 
-    o.x = 0;
-    o.y = 0;
-    o.z = 0;
+    // Important that this runs AFTER setting the VGA subsystem
+    // into graphics mode 13H
+    init_palette();
 
     for (y = SH/2; y >= -SH/2; y--) {
         for (x = -SW/2; x <= SW/2; x++) {
