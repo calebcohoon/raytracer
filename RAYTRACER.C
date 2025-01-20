@@ -9,6 +9,12 @@
 #define VPS 1.0     // Viewport size
 #define PPZ 1.0     // Viewport depth
 
+struct mat3x3 {
+    float a, b, c;
+    float d, e, f;
+    float g, h, i;
+};
+
 struct vector2 {
        float x;
        float y;
@@ -139,7 +145,17 @@ struct vector3 vec3_div(struct vector3 *v, float d) {
 }
 
 float vec3_len(struct vector3 *v) {
-      return sqrt((v->x * v->x) + (v->y * v->y) + (v->z * v->z));
+    return sqrt((v->x * v->x) + (v->y * v->y) + (v->z * v->z));
+}
+
+struct vector3 vec3_mat3x3_mult(struct vector3 *v, struct mat3x3 *m) {
+    struct vector3 result;
+
+    result.x = (m->a * v->x) + (m->b * v->y) + (m->c * v->z);
+    result.y = (m->d * v->x) + (m->e * v->y) + (m->f * v->z);
+    result.z = (m->g * v->x) + (m->h * v->y) + (m->i * v->z);
+
+    return result;
 }
 
 float math_dot(struct vector3 *a, struct vector3 *b) {
@@ -262,11 +278,12 @@ int main(void) {
     struct vector3 o; // camera position
     struct sphere spheres[4];
     struct light lights[3];
+    struct mat3x3 rotation;
     int x, y;
 
-    o.x = 0;
+    o.x = 3;
     o.y = 0;
-    o.z = 0;
+    o.z = 1;
 
     spheres[0].radius = 1;
     spheres[0].center.x = 0;
@@ -307,6 +324,16 @@ int main(void) {
     lights[2].direction.y = 4;
     lights[2].direction.z = 4;
 
+    rotation.a = 0.7071f;
+    rotation.b = 0;
+    rotation.c = -0.7071f;
+    rotation.d = 0;
+    rotation.e = 1;
+    rotation.f = 0;
+    rotation.g = 0.7071f;
+    rotation.h = 0;
+    rotation.i = 0.7071f;
+
     set_mode(0x13);
 
     // Important that this runs AFTER setting the VGA subsystem
@@ -315,8 +342,12 @@ int main(void) {
 
     for (y = SH/2; y >= -SH/2; y--) {
         for (x = -SW/2; x <= SW/2; x++) {
-            struct vector3 d = canvas_to_viewport(x, y);
-            unsigned char color = trace_ray(&o, &d, 1,
+            struct vector3 d;
+            unsigned char color;
+
+            d = canvas_to_viewport(x, y);
+            d = vec3_mat3x3_mult(&d, &rotation);
+            color = trace_ray(&o, &d, 1,
                  INF, 4, spheres, 3, lights);
             set_pixel(x, y, color);
         }
