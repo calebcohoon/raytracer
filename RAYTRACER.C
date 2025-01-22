@@ -33,6 +33,11 @@ struct sphere {
        struct vector3 center;
 };
 
+struct closest_sphere_ret {
+    struct sphere *sphere;
+    float closest_t;
+};
+
 struct light {
        int type;
        float intensity;
@@ -61,8 +66,7 @@ void init_palette() {
 
              // For the very last shade of yellow, just make it white
              // so we have a color for the background
-             if (color == 3 && shade == 63)
-             {
+             if (color == 3 && shade == 63) {
                 outp(0x3C9, (unsigned char)63);
                 outp(0x3C9, (unsigned char)63);
                 outp(0x3C9, (unsigned char)63);
@@ -163,55 +167,6 @@ float math_dot(struct vector3 *a, struct vector3 *b) {
       return (a->x * b->x) + (a->y * b->y) + (a->z * b->z);
 }
 
-float compute_lighting(struct vector3 *p,
-                       struct vector3 *n,
-                       struct vector3 *v,
-                       int s,
-                       int light_count,
-                       struct light *lights) {
-     float i = 0.0f;
-     int li;
-     struct vector3 L, R;
-     float n_dot_l, r_dot_v;
-
-     for (li = 0; li < light_count; li++) {
-         if (lights[li].type == 0) {
-            i += lights[li].intensity;
-         }
-         else
-         {
-             if (lights[li].type == 1) {
-                L = vec3_sub(p, &lights[li].position);
-             }
-             else
-             {
-                L = lights[li].direction;
-             }
-
-             // Diffuse
-             n_dot_l = math_dot(n, &L);
-             if (n_dot_l > 0) {
-                i += lights[li].intensity * n_dot_l/(vec3_len(n)
-                    * vec3_len(&L));
-             }
-
-             // Specular
-             if (s != -1) {
-                R = vec3_mul(n, 2);
-                R = vec3_mul(&R, math_dot(n, &L));
-                R = vec3_sub(&R, &L);
-                r_dot_v = math_dot(&R, v);
-                if (r_dot_v > 0 ) {
-                    i += lights[li].intensity
-                        * pow(r_dot_v/(vec3_len(&R) * vec3_len(v)), s);
-                }
-             }
-         }
-     }
-
-     return i;
-}
-
 struct vector2 intersect_ray_sphere(struct vector3 *o,
                                     struct vector3 *d,
                                     struct sphere *s) {
@@ -236,20 +191,17 @@ struct vector2 intersect_ray_sphere(struct vector3 *o,
      return t;
 }
 
-unsigned char trace_ray(struct vector3 *o,
+struct closest_sphere_ret closest_intersection(struct vector3 *o,
                struct vector3 *d,
-               int t_min,
-               int t_max,
+               float t_min,
+               float t_max,
                int sphere_count,
-               struct sphere *spheres,
-               int light_count,
-               struct light *lights) {
+               struct sphere *spheres) {
      float closest_t = INF;
      struct sphere *closest_sphere = 0;
+     struct closest_sphere_ret result;
      int i = 0;
      struct vector2 t;
-     struct vector3 p, n, inter;
-     float light_inten = 0;
 
      for (i = 0; i < sphere_count; i++) {
          t = intersect_ray_sphere(o, d, &spheres[i]);
@@ -265,20 +217,103 @@ unsigned char trace_ray(struct vector3 *o,
          }
      }
 
-     if (closest_sphere == 0) {
+     result.sphere = closest_sphere;
+     result.closest_t = closest_t;
+
+     return result;
+}
+
+float compute_lighting(struct vector3 *p,
+                       struct vector3 *n,
+                       struct vector3 *v,
+                       int s,
+                       int light_count,
+                       struct light *lights,
+                       int sphere_count,
+                       struct sphere *spheres) {
+     float i = 0.0f;
+     int li;
+     struct vector3 L, R;
+     float n_dot_l, r_dot_v, t_max;
+     struct closest_sphere_ret result;
+
+     for (li = 0; li < light_count; li++) {
+         if (lights[li].type == 0) {
+            i += lights[li].intensity;
+         }
+         else
+         {
+             if (lights[li].type == 1) {
+                L = vec3_sub(p, &lights[li].position);
+                t_max = 1.0f;
+             }
+             else
+             {
+                L = lights[li].direction;
+                t_max = INF;
+             }
+
+             result = closest_intersection(p, &L, 0.001f,
+                t_max, sphere_count, spheres);
+
+             if (result.sphere != 0) {
+                continue;
+             }
+
+             // Diffuse
+             n_dot_l = math_dot(n, &L);
+             if (n_dot_l > 0) {
+                i += lights[li].intensity * n_dot_l/(vec3_len(n)
+                    * vec3_len(&L));
+             }
+
+             // Specular
+             if (s != -1) {
+                R = vec3_mul(n, 2);
+                R = vec3_mul(&R, math_dot(n, &L));
+                R = vec3_sub(&L, &R);
+                r_dot_v = math_dot(&R, v);
+                if (r_dot_v > 0) {
+                    i += lights[li].intensity
+                        * pow(r_dot_v/(vec3_len(&R) * vec3_len(v)), s);
+                }
+             }
+         }
+     }
+
+     return i;
+}
+
+unsigned char trace_ray(struct vector3 *o,
+               struct vector3 *d,
+               float t_min,
+               float t_max,
+               int sphere_count,
+               struct sphere *spheres,
+               int light_count,
+               struct light *lights) {
+     struct closest_sphere_ret result;
+     struct vector3 p, n, inter, d_neg;
+     float light_inten = 0;
+
+     result = closest_intersection(o, d, t_min, t_max,
+        sphere_count, spheres);
+
+     if (result.sphere == 0) {
         // Full white
         return shade_color(3, 1);
      }
 
-     inter = vec3_mul(d, closest_t);
+     inter = vec3_mul(d, result.closest_t);
      p = vec3_add(o, &inter);
-     n = vec3_sub(&closest_sphere->center, &p);
+     n = vec3_sub(&result.sphere->center, &p);
      n = vec3_div(&n, vec3_len(&n));
+     d_neg = vec3_mul(d, -1);
 
-     light_inten = compute_lighting(&p, &n, d, closest_sphere->specular,
-        light_count, lights);
+     light_inten = compute_lighting(&p, &n, &d_neg, result.sphere->specular,
+        light_count, lights, sphere_count, spheres);
 
-     return shade_color(closest_sphere->color, light_inten);
+     return shade_color(result.sphere->color, light_inten);
 }
 
 struct vector3 canvas_to_viewport(int x, int y) {
