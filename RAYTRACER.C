@@ -28,6 +28,7 @@ struct vector3 {
 
 struct sphere {
        float radius;
+       int specular;
        char color;
        struct vector3 center;
 };
@@ -164,12 +165,14 @@ float math_dot(struct vector3 *a, struct vector3 *b) {
 
 float compute_lighting(struct vector3 *p,
                        struct vector3 *n,
+                       struct vector3 *v,
+                       int s,
                        int light_count,
                        struct light *lights) {
      float i = 0.0f;
      int li;
-     struct vector3 L;
-     float n_dot_l = 0.0f;
+     struct vector3 L, R;
+     float n_dot_l, r_dot_v;
 
      for (li = 0; li < light_count; li++) {
          if (lights[li].type == 0) {
@@ -185,10 +188,23 @@ float compute_lighting(struct vector3 *p,
                 L = lights[li].direction;
              }
 
+             // Diffuse
              n_dot_l = math_dot(n, &L);
-
              if (n_dot_l > 0) {
-                i += lights[li].intensity * n_dot_l/(vec3_len(n) * vec3_len(&L));
+                i += lights[li].intensity * n_dot_l/(vec3_len(n)
+                    * vec3_len(&L));
+             }
+
+             // Specular
+             if (s != -1) {
+                R = vec3_mul(n, 2);
+                R = vec3_mul(&R, math_dot(n, &L));
+                R = vec3_sub(&R, &L);
+                r_dot_v = math_dot(&R, v);
+                if (r_dot_v > 0 ) {
+                    i += lights[li].intensity
+                        * pow(r_dot_v/(vec3_len(&R) * vec3_len(v)), s);
+                }
              }
          }
      }
@@ -259,7 +275,8 @@ unsigned char trace_ray(struct vector3 *o,
      n = vec3_sub(&closest_sphere->center, &p);
      n = vec3_div(&n, vec3_len(&n));
 
-     light_inten = compute_lighting(&p, &n, light_count, lights);
+     light_inten = compute_lighting(&p, &n, d, closest_sphere->specular,
+        light_count, lights);
 
      return shade_color(closest_sphere->color, light_inten);
 }
@@ -281,33 +298,37 @@ int main(void) {
     struct mat3x3 rotation;
     int x, y;
 
-    o.x = 3;
+    o.x = 0;
     o.y = 0;
-    o.z = 1;
+    o.z = 0;
 
     spheres[0].radius = 1;
     spheres[0].center.x = 0;
     spheres[0].center.y = -1;
     spheres[0].center.z = 3;
-    spheres[0].color = 2;
+    spheres[0].specular = 500;  // Shiny
+    spheres[0].color = 2;       // Red
 
     spheres[1].radius = 1;
     spheres[1].center.x = -2;
     spheres[1].center.y = 0;
     spheres[1].center.z = 4;
-    spheres[1].color = 1;
+    spheres[1].specular = 10;   // Somewhat shiny
+    spheres[1].color = 1;       // Green
 
     spheres[2].radius = 1;
     spheres[2].center.x = 2;
     spheres[2].center.y = 0;
     spheres[2].center.z = 4;
-    spheres[2].color = 0;
+    spheres[2].specular = 500;  // Shiny
+    spheres[2].color = 0;       // Blue
 
     spheres[3].radius = 5000;
     spheres[3].center.x = 0;
     spheres[3].center.y = -5001;
     spheres[3].center.z = 0;
-    spheres[3].color = 3;
+    spheres[3].specular = 1000; // Very shiny
+    spheres[3].color = 3;       // Yellow
 
     lights[0].type = 0;
     lights[0].intensity = 0.2f;
@@ -346,7 +367,7 @@ int main(void) {
             unsigned char color;
 
             d = canvas_to_viewport(x, y);
-            d = vec3_mat3x3_mult(&d, &rotation);
+            //d = vec3_mat3x3_mult(&d, &rotation);
             color = trace_ray(&o, &d, 1,
                  INF, 4, spheres, 3, lights);
             set_pixel(x, y, color);
