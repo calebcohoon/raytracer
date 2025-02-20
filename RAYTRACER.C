@@ -3,20 +3,26 @@
 #include <i86.h>
 #include <math.h>
 
-#define INF 32767 // Infinity for 16 bit compilers
-#define SW 320    // Screen width
-#define SH 200    // Screen height
-#define VPS 1.0   // Viewport size
-#define PPZ 1.0   // Viewport depth
-#define AMBIENT_LIGHT 0
-#define POINT_LIGHT 1
-#define DIRECTIONAL_LIGHT 2
+/* Constants */
+#define INF 32767         // Infinity for 16 bit compilers
+#define SW 320            // Screen width
+#define SH 200            // Screen height
+#define VPS 1.0           // Viewport size
+#define PPZ 1.0           // Viewport depth
+#define ASPECT_RATIO 1.2f // For adjusting the squashed pixels
+
+/* Screen/Viewport calculations */
 #define SCREEN_CENTER_X (SW / 2)
 #define SCREEN_CENTER_Y (SH / 2)
 #define VPS_SW (VPS / SW)
 #define VPS_SH (VPS / SH)
-#define ASPECT_RATIO 1.2f
 
+/* Light types */
+#define AMBIENT_LIGHT 0
+#define POINT_LIGHT 1
+#define DIRECTIONAL_LIGHT 2
+
+/* Core Data Structures */
 typedef struct {
   float x;
   float y;
@@ -29,10 +35,10 @@ typedef struct {
 } vector3;
 
 typedef struct {
-  float radius;
-  int specular;
-  char color;
-  vector3 center;
+  float radius;   // Size of the sphere
+  int specular;   // Controls shininess
+  char color;     // Base color index
+  vector3 center; // Location of the sphere
 } sphere;
 
 typedef struct {
@@ -42,74 +48,39 @@ typedef struct {
   vector3 direction;
 } light;
 
-// Build an optimized palette for the four main colors being used
-void init_palette() {
-  int color, shade;
-  unsigned char index;
-  float intensity;
-  unsigned char base_colors[4][3] = {
-      {0, 0, 63},  // Blue
-      {0, 63, 0},  // Green
-      {63, 0, 0},  // Red
-      {63, 63, 32} // Yellow
-  };
+/* Vector Operations */
+vector3 vec3_add(vector3 *a, vector3 *b);
+vector3 vec3_sub(vector3 *a, vector3 *b);
+vector3 vec3_mul(vector3 *v, float s);
+vector3 vec3_div(vector3 *v, float d);
+float vec3_len(vector3 *v);
+float vec3_dot(vector3 *a, vector3 *b);
+vector3 reflect_ray(vector3 *r, vector3 *n);
 
-  for (color = 0; color < 4; color++) {
-    for (shade = 0; shade < 64; shade++) {
-      index = color * 64 + shade;
-      intensity = shade / 63.0f;
+/* Graphics System */
+void set_mode(unsigned char mode);
+void set_pixel(int x, int y, char color);
+void init_palette(void);
+unsigned char shade_color(unsigned char color, float intensity);
 
-      outp(0x3C8, index);
+/* Ray Tracing Core */
+vector2 intersect_ray_sphere(vector3 *o, vector3 *d, sphere *s);
+sphere *closest_intersection(vector3 *o, vector3 *d, float t_min, float t_max,
+                             float *closest_t, int sphere_count,
+                             sphere *spheres);
+vector3 canvas_to_viewport(int x, int y);
 
-      // For the very last shade of yellow, just make it white
-      // so we have a color for the background
-      if (color == 3 && shade == 63) {
-        outp(0x3C9, (unsigned char)63);
-        outp(0x3C9, (unsigned char)63);
-        outp(0x3C9, (unsigned char)63);
-      } else {
-        outp(0x3C9, (unsigned char)(base_colors[color][0] * intensity));
-        outp(0x3C9, (unsigned char)(base_colors[color][1] * intensity));
-        outp(0x3C9, (unsigned char)(base_colors[color][2] * intensity));
-      }
-    }
-  }
-}
+/* Lighting System */
+float compute_lighting(vector3 *p, vector3 *n, vector3 *v, int s,
+                       int light_count, light *lights, int sphere_count,
+                       sphere *spheres);
 
-void set_mode(unsigned char mode) {
-  union REGS regs;
+/* Main Rendering */
+unsigned char trace_ray(vector3 *o, vector3 *d, float t_min, float t_max,
+                        int sphere_count, sphere *spheres, int light_count,
+                        light *lights);
 
-  regs.h.ah = 0;
-  regs.h.al = mode;
-
-  int86(0x10, &regs, &regs);
-}
-
-void set_pixel(int x, int y, char color) {
-  char far *screen = MK_FP(0xA000, 0);
-  int ax, ay;
-
-  ax = SCREEN_CENTER_X + x;
-  ay = SCREEN_CENTER_Y - y;
-
-  if (ax < 0 || ax >= SW || ay < 0 || ay >= SH) {
-    return;
-  }
-
-  screen[ay * SW + ax] = color;
-}
-
-unsigned char shade_color(unsigned char color, float intensity) {
-  unsigned char shade;
-  if (intensity > 1.0f)
-    intensity = 1.0f;
-  if (intensity < 0.0f)
-    intensity = 0.0f;
-
-  shade = (unsigned char)(intensity * 63.0f);
-  return color * 64 + shade;
-}
-
+/* Implementations */
 vector3 vec3_add(vector3 *a, vector3 *b) {
   vector3 result;
 
@@ -157,6 +128,84 @@ float vec3_len(vector3 *v) {
 
 float vec3_dot(vector3 *a, vector3 *b) {
   return (a->x * b->x) + (a->y * b->y) + (a->z * b->z);
+}
+
+vector3 reflect_ray(vector3 *r, vector3 *n) {
+  vector3 R;
+
+  R = vec3_mul(n, 2);
+  R = vec3_mul(&R, vec3_dot(n, r));
+  R = vec3_sub(&R, r);
+
+  return R;
+}
+
+void set_mode(unsigned char mode) {
+  union REGS regs;
+
+  regs.h.ah = 0;
+  regs.h.al = mode;
+
+  int86(0x10, &regs, &regs);
+}
+
+void set_pixel(int x, int y, char color) {
+  char far *screen = MK_FP(0xA000, 0);
+  int ax, ay;
+
+  ax = SCREEN_CENTER_X + x;
+  ay = SCREEN_CENTER_Y - y;
+
+  if (ax < 0 || ax >= SW || ay < 0 || ay >= SH) {
+    return;
+  }
+
+  screen[ay * SW + ax] = color;
+}
+
+void init_palette() {
+  int color, shade;
+  unsigned char index;
+  float intensity;
+  unsigned char base_colors[4][3] = {
+      {0, 0, 63},  // Blue
+      {0, 63, 0},  // Green
+      {63, 0, 0},  // Red
+      {63, 63, 32} // Yellow
+  };
+
+  // Build an optimized palette for the four main colors being used
+  for (color = 0; color < 4; color++) {
+    for (shade = 0; shade < 64; shade++) {
+      index = color * 64 + shade;
+      intensity = shade / 63.0f;
+
+      outp(0x3C8, index);
+
+      // For the very last shade of yellow, just make it white
+      // so we have a color for the background
+      if (color == 3 && shade == 63) {
+        outp(0x3C9, 63);
+        outp(0x3C9, 63);
+        outp(0x3C9, 63);
+      } else {
+        outp(0x3C9, (unsigned char)(base_colors[color][0] * intensity));
+        outp(0x3C9, (unsigned char)(base_colors[color][1] * intensity));
+        outp(0x3C9, (unsigned char)(base_colors[color][2] * intensity));
+      }
+    }
+  }
+}
+
+unsigned char shade_color(unsigned char color, float intensity) {
+  unsigned char shade;
+  if (intensity > 1.0f)
+    intensity = 1.0f;
+  if (intensity < 0.0f)
+    intensity = 0.0f;
+
+  shade = (unsigned char)(intensity * 63.0f);
+  return color * 64 + shade;
 }
 
 vector2 intersect_ray_sphere(vector3 *o, vector3 *d, sphere *s) {
@@ -209,14 +258,14 @@ sphere *closest_intersection(vector3 *o, vector3 *d, float t_min, float t_max,
   return closest_sphere;
 }
 
-vector3 reflect_ray(vector3 *r, vector3 *n) {
-  vector3 R;
+vector3 canvas_to_viewport(int x, int y) {
+  vector3 pos;
 
-  R = vec3_mul(n, 2);
-  R = vec3_mul(&R, vec3_dot(n, r));
-  R = vec3_sub(&R, r);
+  pos.x = x * VPS_SW * ASPECT_RATIO;
+  pos.y = y * VPS_SH;
+  pos.z = PPZ;
 
-  return R;
+  return pos;
 }
 
 float compute_lighting(vector3 *p, vector3 *n, vector3 *v, int s,
@@ -297,16 +346,6 @@ unsigned char trace_ray(vector3 *o, vector3 *d, float t_min, float t_max,
   return shade_color(hit_sphere->color, light_inten);
 }
 
-vector3 canvas_to_viewport(int x, int y) {
-  vector3 pos;
-
-  pos.x = x * VPS_SW * ASPECT_RATIO;
-  pos.y = y * VPS_SH;
-  pos.z = PPZ;
-
-  return pos;
-}
-
 int main(void) {
   vector3 o = {0, 0, 0};
   sphere spheres[] = {
@@ -326,8 +365,8 @@ int main(void) {
   // into graphics mode 13H
   init_palette();
 
-  for (y = SH / 2; y >= -SH / 2; y--) {
-    for (x = -SW / 2; x <= SW / 2; x++) {
+  for (x = -SW / 2; x <= SW / 2; x++) {
+    for (y = SH / 2; y >= -SH / 2; y--) {
       vector3 d = canvas_to_viewport(x, y);
       unsigned char color = trace_ray(&o, &d, 1, INF, 4, spheres, 3, lights);
       set_pixel(x, y, color);
